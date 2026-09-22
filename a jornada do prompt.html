@@ -1,0 +1,975 @@
+<!DOCTYPE html>
+<html lang="pt-BR" class="dark">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>A Jornada do Token: Do Texto à Matriz</title>
+  
+  <!-- Tailwind CSS -->
+  <script src="https://cdn.tailwindcss.com"></script>
+  <!-- Three.js para o Espaço Dimensional -->
+  <script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+  <!-- Google Fonts -->
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;600;800&family=JetBrains+Mono:wght@400;700&display=swap" rel="stylesheet">
+
+  <script>
+    tailwind.config = {
+      darkMode: 'class',
+      theme: {
+        extend: {
+          fontFamily: {
+            sans: ['Inter', 'sans-serif'],
+            mono: ['JetBrains Mono', 'monospace'],
+          },
+          colors: {
+            matrix: '#0f172a',
+            neon: {
+              blue: '#38bdf8',
+              purple: '#c084fc',
+              green: '#34d399',
+              pink: '#f472b6'
+            }
+          }
+        }
+      }
+    }
+  </script>
+
+  <style>
+    body {
+      background-color: #020617; /* Slate 950 */
+      color: #f8fafc;
+      overflow-x: hidden;
+    }
+
+    /* Utilitários para Animações Dinâmicas */
+    .transition-transform-layout {
+      transition: all 1.2s cubic-bezier(0.4, 0, 0.2, 1);
+    }
+    
+    .fade-enter {
+      opacity: 0;
+      transform: translateY(10px);
+    }
+    .fade-enter-active {
+      opacity: 1;
+      transform: translateY(0);
+      transition: opacity 0.5s ease, transform 0.5s ease;
+    }
+
+    /* Efeitos de Brilho (Glow) */
+    .glow-blue { box-shadow: 0 0 15px rgba(56, 189, 248, 0.5); border-color: rgba(56, 189, 248, 0.8) !important; }
+    .glow-purple { box-shadow: 0 0 20px rgba(192, 132, 252, 0.5); border-color: rgba(192, 132, 252, 0.8) !important; }
+    .glow-green { box-shadow: 0 0 15px rgba(52, 211, 153, 0.5); border-color: rgba(52, 211, 153, 0.8) !important; }
+
+    /* --- CORREÇÃO DE LAYOUT THREE.JS --- 
+       O canvas deve ser absoluto DENTRO de seu container pai (seção direita),
+       ficar no fundo (z-index: 0) e não roubar clicks (pointer-events: none).
+    */
+    #canvas-container {
+      position: absolute;
+      top: 0; 
+      left: 0; 
+      width: 100%; 
+      height: 100%;
+      z-index: 0; /* Fica atrás da UI do Motor */
+      opacity: 0.1; /* Começa escuro, acende no momento certo */
+      transition: opacity 2s ease-in-out;
+      pointer-events: none; /* Deixa interagir com o DOM por cima */
+    }
+    #canvas-container.active {
+      opacity: 1;
+    }
+
+    /* Overlay para mover elementos livremente pela tela */
+    #animation-overlay {
+      position: fixed;
+      top: 0; left: 0; width: 100vw; height: 100vh;
+      pointer-events: none; /* Muito importante para não bloquear botões */
+      z-index: 9999;
+    }
+
+    /* Balão de Chat animado */
+    .chat-bubble {
+      background: linear-gradient(135deg, #1e293b, #0f172a);
+      border: 1px solid #334155;
+      padding: 12px 16px;
+      border-radius: 16px;
+      border-bottom-right-radius: 4px;
+      display: inline-block;
+      box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.3);
+    }
+    .chat-bubble.bot {
+      background: linear-gradient(135deg, #0f172a, #164e63);
+      border: 1px solid #0891b2;
+      border-bottom-left-radius: 4px;
+      border-bottom-right-radius: 16px;
+    }
+
+    /* Estilo dos Tokens */
+    .token-card {
+      background: #1e293b;
+      border: 1px solid #475569;
+      border-radius: 8px;
+      padding: 8px 12px;
+      font-family: 'JetBrains Mono', monospace;
+      font-size: 0.875rem;
+      text-align: center;
+      position: relative;
+      overflow: hidden;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      min-width: 60px;
+    }
+    
+    .token-text-layer, .token-id-layer {
+      transition: opacity 0.6s ease, transform 0.6s ease;
+    }
+    
+    .token-id-layer {
+      position: absolute;
+      top: 50%; left: 50%;
+      transform: translate(-50%, -50%) rotateX(90deg);
+      opacity: 0;
+      color: #38bdf8;
+      font-weight: bold;
+    }
+
+    /* Efeito de Flip: Texto para ID */
+    .token-card.flip .token-text-layer {
+      opacity: 0;
+      transform: translateY(-20px);
+    }
+    .token-card.flip .token-id-layer {
+      opacity: 1;
+      transform: translate(-50%, -50%) rotateX(0deg);
+    }
+
+    /* Matriz de Embeddings */
+    .embedding-row {
+      display: flex;
+      gap: 4px;
+      opacity: 0;
+      transform: scaleY(0);
+      transform-origin: top;
+      transition: all 0.5s ease;
+    }
+    .embedding-row.active {
+      opacity: 1;
+      transform: scaleY(1);
+    }
+    .embedding-cell {
+      font-size: 0.65rem;
+      padding: 4px;
+      background: rgba(15, 23, 42, 0.8);
+      border: 1px solid rgba(56, 189, 248, 0.3);
+      color: #94a3b8;
+      border-radius: 4px;
+      width: 45px;
+      text-align: center;
+    }
+    .embedding-cell.highlight {
+      background: rgba(192, 132, 252, 0.2);
+      border-color: #c084fc;
+      color: #e9d5ff;
+    }
+
+    /* Barra de Progresso Didática */
+    .step-indicator {
+      width: 12px; height: 12px; border-radius: 50%;
+      background: #334155; transition: all 0.3s ease;
+    }
+    .step-indicator.active { background: #38bdf8; box-shadow: 0 0 10px #38bdf8; }
+    .step-indicator.done { background: #34d399; }
+
+    .floating-title-overlay {
+      position: fixed;
+      top: 50%; left: 50%;
+      transform: translate(-50%, -50%) scale(0.9);
+      z-index: 10000;
+      opacity: 0;
+      pointer-events: none;
+      transition: all 0.5s cubic-bezier(0.34, 1.56, 0.64, 1);
+    }
+    .floating-title-overlay.active {
+      opacity: 1;
+      transform: translate(-50%, -50%) scale(1);
+    }
+    .title-text-neon {
+      font-size: 3.5rem;
+      font-weight: 900;
+      text-transform: uppercase;
+      letter-spacing: 0.1em;
+      background: linear-gradient(to right, #38bdf8, #c084fc);
+      -webkit-background-clip: text;
+      -webkit-text-fill-color: transparent;
+      filter: drop-shadow(0 0 25px rgba(192, 132, 252, 0.6));
+    }
+
+    /* Novos estilos para as tags espaciais (Q, K, V) que flutuam no 3D */
+    .spatial-label {
+      position: absolute;
+      transform: translate(-50%, -150%);
+      font-family: 'JetBrains Mono', monospace;
+      font-weight: 900;
+      font-size: 1.5rem;
+      pointer-events: none;
+      opacity: 0;
+      transition: opacity 0.4s ease-in-out, transform 0.1s linear;
+      z-index: 10; /* Fica acima do canvas, mas abaixo de tooltips globais */
+      letter-spacing: 2px;
+      text-transform: uppercase;
+    }
+    .spatial-label.visible { 
+      opacity: 1; 
+      transform: translate(-50%, -200%); 
+    }
+  </style>
+</head>
+
+<body class="h-screen flex flex-col font-sans overflow-hidden">
+  
+  <!-- Navegação de Controle Superior -->
+  <header class="bg-slate-950 border-b border-slate-800 p-4 flex justify-between items-center shrink-0 z-50 relative shadow-md">
+    <div class="flex items-center gap-3">
+      <div class="w-8 h-8 rounded-lg bg-gradient-to-tr from-neon-blue to-neon-purple flex items-center justify-center font-bold text-white shadow-[0_0_15px_rgba(56,189,248,0.4)]">
+        IA
+      </div>
+      <h1 class="text-lg font-bold tracking-tight text-white">Laboratório Dinâmico</h1>
+    </div>
+    
+    <div class="flex items-center gap-4">
+      <div id="status-text" class="text-xs text-slate-400 font-mono bg-slate-900 px-3 py-1.5 rounded-full border border-slate-700">
+        Pronto para iniciar a simulação.
+      </div>
+      <button id="btn-play" onclick="startDidacticSequence()" class="bg-neon-blue hover:bg-sky-400 text-slate-950 px-5 py-2 rounded-lg font-bold text-sm transition-all shadow-[0_0_15px_rgba(56,189,248,0.4)] flex items-center gap-2">
+        <span>▶</span> Iniciar Simulação
+      </button>
+      <button id="btn-reset" onclick="resetSimulation()" class="hidden bg-slate-800 hover:bg-slate-700 text-slate-200 px-4 py-2 rounded-lg font-bold text-sm border border-slate-600 transition-all">
+        Reiniciar
+      </button>
+    </div>
+  </header>
+
+  <!-- Overlay para animações de voo -->
+  <div id="animation-overlay"></div>
+  
+  <!-- Container para os Títulos Temporários (Prompt, Token, etc) -->
+  <div id="floating-titles-container"></div>
+    
+  <main class="flex-1 flex w-full relative overflow-hidden">
+    <!-- LADO ESQUERDO: O Mundo Natural (Chat) -->
+    <!-- Adicionado z-30 para ficar acima do canvas adjacente caso a tela fique estreita -->
+    <section class="w-1/3 bg-slate-950 border-r border-slate-800 p-6 flex flex-col relative z-30 shadow-2xl">
+      <div class="mb-4 pb-2 border-b border-slate-800 flex justify-between items-center">
+        <h2 class="text-sm font-bold text-slate-300 uppercase tracking-wider flex items-center gap-2">
+          <span>📱</span> Mundo Natural
+        </h2>
+        <span class="text-[10px] bg-slate-800 px-2 py-1 rounded text-slate-400">Interface Humana</span>
+      </div>
+      
+      <!-- Caixa de Chat -->
+      <div id="chat-container" class="flex-1 flex flex-col gap-4 p-2 relative overflow-y-auto">
+        <!-- Requisição do Usuário (Surgirá via JS) -->
+        <div id="user-msg-container" class="self-end opacity-0 max-w-[85%]">
+          <div id="user-msg" class="chat-bubble text-sm">O que é IA Generativa?</div>
+        </div>
+        
+        <!-- Resposta da IA (Surgirá no final) -->
+        <div id="bot-msg-container" class="self-start opacity-0 max-w-[95%] mt-auto">
+          <div id="bot-msg" class="chat-bubble bot text-sm text-neon-green"></div>
+        </div>
+      </div>
+    </section>
+
+    <!-- LADO DIREITO: O Mundo Dimensional (LLM Core) -->
+    <!-- position relative cria um novo stacking context. z-10 mantém ele sob controle -->
+    <section class="w-2/3 bg-matrix relative flex flex-col z-10 overflow-hidden" id="right-panel">
+      
+      <!-- Cabeçalho do Core -->
+      <div class="absolute top-0 left-0 w-full p-4 flex justify-between items-center z-20 pointer-events-none">
+        <h2 class="text-sm font-bold text-neon-purple uppercase tracking-wider flex items-center gap-2">
+          <span>⚙️</span> Motor Transformer
+        </h2>
+        
+        <!-- Passos Didáticos -->
+        <div class="flex items-center gap-2 bg-slate-900/80 p-2 rounded-full border border-slate-700/50 backdrop-blur-sm pointer-events-auto">
+          <div class="step-indicator" id="step-1" title="Tokenização"></div>
+          <div class="w-4 h-[1px] bg-slate-700"></div>
+          <div class="step-indicator" id="step-2" title="Embeddings"></div>
+          <div class="w-4 h-[1px] bg-slate-700"></div>
+          <div class="step-indicator" id="step-3" title="Espaço Latente (Atenção)"></div>
+          <div class="w-4 h-[1px] bg-slate-700"></div>
+          <div class="step-indicator" id="step-4" title="Geração & Decodificação"></div>
+        </div>
+      </div>
+
+      <!-- Container do Three.js fixado no fundo deste painel -->
+      <div id="canvas-container"></div>
+
+      <!-- Área de Interface Overlay do Motor (Z-20 para ficar ACIMA do Canvas) -->
+      <div class="flex-1 p-8 pt-20 flex flex-col gap-8 z-20 pointer-events-none relative overflow-y-auto">
+        
+        <!-- ZONA 1: Tokenizador -->
+        <div class="flex flex-col items-center gap-4">
+          <!-- bg e border com transição. pointer-events-auto para permitir inspecionar se necessário -->
+          <div id="tokenizer-dropzone" class="w-full max-w-lg min-h-[60px] border-2 border-dashed border-slate-700 rounded-xl flex items-center justify-center p-2 relative bg-slate-900/40 backdrop-blur-sm transition-all duration-300 pointer-events-auto">
+            <span id="tokenizer-hint" class="text-xs text-slate-500 font-mono absolute transition-opacity duration-300">Receptor do Fatiador (BPE)</span>
+            <div id="tokens-wrapper" class="flex flex-wrap justify-center gap-2 w-full z-10 opacity-0 transition-opacity duration-300">
+              <!-- Tokens injetados via JS -->
+            </div>
+          </div>
+        </div>
+
+        <!-- ZONA 2: Matriz de Embeddings -->
+        <div class="flex flex-col items-center flex-1">
+          <div id="matrix-container" class="w-full max-w-2xl flex flex-col gap-2 mt-4 pointer-events-auto transition-opacity duration-1000">
+            <!-- Linhas da matriz geradas via JS -->
+          </div>
+        </div>
+
+      </div>
+    </section>
+  </main>
+
+  <!-- Caixa de Explicação Didática (Rodapé) -->
+  <footer class="bg-slate-950 border-t border-slate-800 p-4 shrink-0 z-50 shadow-[0_-10px_20px_rgba(0,0,0,0.5)] relative">
+    <div class="max-w-4xl mx-auto flex items-start gap-4">
+      <div class="text-3xl" id="footer-icon">👨‍🏫</div>
+      <div>
+        <h3 class="text-neon-blue font-bold text-sm mb-1 uppercase tracking-wider" id="explanation-title">O Laboratório está pronto</h3>
+        <p class="text-slate-300 text-sm leading-relaxed" id="explanation-text">
+          Aperte o "Play" no canto superior direito para iniciarmos nossa jornada. Vamos acompanhar como um modelo de linguagem desconstrói sua linguagem, transforma em matemática multidimensional e cria uma resposta estatística.
+        </p>
+      </div>
+    </div>
+  </footer>
+
+  <script>
+    // --- ESTADO DIDÁTICO E DADOS ---
+    const rawText = "O que é IA Generativa?";
+    const tokens = [
+      { text: "O", id: 45 },
+      { text: " que", id: 219 },
+      { text: " é", id: 102 },
+      { text: " IA", id: 942 },
+      { text: " Gener", id: 881 },
+      { text: "ativa", id: 312 },
+      { text: "?", id: 30 }
+    ];
+    
+    // Resposta simulada (geração auto-regressiva)
+    const responseTokens = [
+      { text: "IA", id: 942 },
+      { text: " Gener", id: 881 },
+      { text: "ativa", id: 312 },
+      { text: " cria", id: 753 },
+      { text: " conteúdos", id: 1205 },
+      { text: " inéditos", id: 3491 },
+      { text: ".", id: 15 }
+    ];
+
+    // Variáveis Globais de Controle
+    let isPlaying = false;
+    const delay = ms => new Promise(res => setTimeout(res, ms));
+    let activeLabels = []; // Rastreia as labels HTML conectadas aos nós 3D
+
+    async function showFloatingTitle(htmlContent, duration = 2500) {
+      const container = document.getElementById('floating-titles-container');
+      const el = document.createElement('div');
+      el.className = 'floating-title-overlay';
+      
+      // Verifica se é apenas texto simples para aplicar o estilo padrão neon
+      if (!htmlContent.includes('<')) {
+        el.innerHTML = `<div class="title-text-neon text-center">${htmlContent}</div>`;
+      } else {
+        el.innerHTML = htmlContent;
+      }
+      
+      container.appendChild(el);
+      
+      // Força reflow
+      void el.offsetWidth;
+      el.classList.add('active');
+      
+      await delay(duration);
+      
+      el.classList.remove('active');
+      await delay(500); // Tempo da transição CSS para sumir
+      el.remove();
+    }
+
+    // --- THREE.JS SETUP (ESPAÇO VETORIAL) ---
+    let scene, camera, renderer, nodesGroup, linesGroup;
+    let particleGeometry, particleMaterial, particles;
+    const activeNodes = []; // Armazena as malhas 3D que representam nossos tokens
+    const lines = []; // Conexões de atenção
+
+    function init3DSpace() {
+      const container = document.getElementById('canvas-container');
+      
+      // Checa se o container tem tamanho (Evita bug de montagem invisível)
+      const width = container.clientWidth || window.innerWidth * (2/3); 
+      const height = container.clientHeight || window.innerHeight;
+
+      scene = new THREE.Scene();
+      
+      // Câmera
+      camera = new THREE.PerspectiveCamera(60, width / height, 0.1, 1000);
+      camera.position.set(0, 0, 15);
+
+      // Renderizador
+      renderer = new THREE.WebGLRenderer({ alpha: true, antialias: true });
+      renderer.setSize(width, height);
+      renderer.setPixelRatio(window.devicePixelRatio);
+      
+      // Previne que o canvas aplique estilos inline problemáticos
+      // A classe css 'canvas-container' já cuida da posição
+      container.appendChild(renderer.domElement);
+
+      nodesGroup = new THREE.Group();
+      linesGroup = new THREE.Group();
+      scene.add(nodesGroup);
+      scene.add(linesGroup);
+
+      // Criar a "Nuvem Latente" de fundo
+      createLatentCloud();
+
+      // Ajuste de redimensionamento responsivo focado no painel direito
+      window.addEventListener('resize', () => {
+        const newWidth = container.clientWidth;
+        const newHeight = container.clientHeight;
+        if(newWidth > 0 && newHeight > 0) {
+           camera.aspect = newWidth / newHeight;
+           camera.updateProjectionMatrix();
+           renderer.setSize(newWidth, newHeight);
+        }
+      });
+
+      animate3D();
+    }
+
+    function createLatentCloud() {
+      const particleCount = 2000;
+      const geometry = new THREE.BufferGeometry();
+      const positions = new Float32Array(particleCount * 3);
+      const colors = new Float32Array(particleCount * 3);
+
+      const color1 = new THREE.Color(0x1e293b); // slate-800
+      const color2 = new THREE.Color(0x0f172a); // slate-900
+
+      for(let i=0; i<particleCount; i++) {
+        // Distribuição esférica
+        const r = 8 + Math.random() * 15;
+        const theta = Math.random() * 2 * Math.PI;
+        const phi = Math.acos(Math.random() * 2 - 1);
+        
+        positions[i*3] = r * Math.sin(phi) * Math.cos(theta);
+        positions[i*3+1] = r * Math.sin(phi) * Math.sin(theta);
+        positions[i*3+2] = r * Math.cos(phi);
+
+        const mixedColor = color1.clone().lerp(color2, Math.random());
+        colors[i*3] = mixedColor.r;
+        colors[i*3+1] = mixedColor.g;
+        colors[i*3+2] = mixedColor.b;
+      }
+
+      geometry.setAttribute('position', new THREE.BufferAttribute(positions, 3));
+      geometry.setAttribute('color', new THREE.BufferAttribute(colors, 3));
+
+      const material = new THREE.PointsMaterial({
+        size: 0.1,
+        vertexColors: true,
+        transparent: true,
+        opacity: 0.5
+      });
+
+      particles = new THREE.Points(geometry, material);
+      scene.add(particles);
+    }
+
+    function animate3D() {
+      requestAnimationFrame(animate3D);
+      
+      // Rotação sutil contínua
+      if (particles) {
+        particles.rotation.y += 0.001;
+        particles.rotation.x += 0.0005;
+      }
+      
+      // Rotação do grupo de nós ativos (tokens)
+      if (nodesGroup.children.length > 0) {
+        nodesGroup.rotation.y -= 0.005; // Gira o cluster de tokens
+        
+        // Atualiza a posição das linhas conectando os nós
+        if (lines.length > 0) {
+          linesGroup.clear(); // Limpa e redesenha para manter o tracking da rotação
+          const mat = new THREE.LineBasicMaterial({ 
+            color: 0xc084fc, 
+            transparent: true, 
+            opacity: 0.3,
+            linewidth: 1
+          });
+          
+          for(let i=0; i<activeNodes.length; i++) {
+            for(let j=i+1; j<activeNodes.length; j++) {
+              // Só conecta alguns para não ficar caótico
+              if (Math.random() > 0.3) {
+                const points = [];
+                // Posição global do nó dentro do grupo que está rodando
+                const v1 = new THREE.Vector3().copy(activeNodes[i].position);
+                const v2 = new THREE.Vector3().copy(activeNodes[j].position);
+                points.push(v1, v2);
+                const geo = new THREE.BufferGeometry().setFromPoints(points);
+                const line = new THREE.Line(geo, mat);
+                linesGroup.add(line);
+              }
+            }
+          }
+        }
+      }
+
+      // Sincroniza as labels HTML (Q, K, V) com a posição dos nós 3D em tempo real
+      if (activeLabels.length > 0) {
+        const rightPanel = document.getElementById('right-panel');
+        // Usa o painel direito como referência de offset, pois o canvas está dentro dele
+        const rect = rightPanel.getBoundingClientRect();
+        
+        activeLabels.forEach(item => {
+          // Copia a posição local do nó e aplica a matriz de rotação do grupo pai
+          const vector = item.node.position.clone();
+          vector.applyMatrix4(nodesGroup.matrixWorld); 
+          
+          vector.project(camera); // Projeta a coordenada 3D para o plano 2D (-1 a +1)
+
+          // Converte para coordenadas de pixel DENTRO do rightPanel
+          const x = (vector.x * .5 + .5) * rect.width;
+          const y = (-(vector.y * .5) + .5) * rect.height;
+
+          item.el.style.left = `${x}px`;
+          item.el.style.top = `${y}px`;
+        });
+      }
+
+      renderer.render(scene, camera);
+    }
+
+    // Função para criar nós 3D representando os tokens inseridos
+    function createTokenNodes3D(tokenCount) {
+      nodesGroup.clear();
+      linesGroup.clear();
+      activeNodes.length = 0;
+      lines.length = 0;
+
+      const sphereGeo = new THREE.SphereGeometry(0.3, 16, 16);
+      const sphereMat = new THREE.MeshBasicMaterial({ color: 0x38bdf8 });
+
+      for(let i=0; i<tokenCount; i++) {
+        const mesh = new THREE.Mesh(sphereGeo, sphereMat);
+        // Posição pseudo-aleatória ao redor do centro
+        mesh.position.set(
+          (Math.random() - 0.5) * 8,
+          (Math.random() - 0.5) * 8,
+          (Math.random() - 0.5) * 8
+        );
+        mesh.scale.set(0,0,0);
+        nodesGroup.add(mesh);
+        activeNodes.push(mesh);
+      }
+    }
+
+    async function animateNodesIn() {
+      const steps = 30;
+      for (let s = 1; s <= steps; s++) {
+        const scale = (s / steps);
+        activeNodes.forEach(node => {
+          const bounce = scale + Math.sin(scale * Math.PI) * 0.2;
+          node.scale.set(bounce, bounce, bounce);
+        });
+        await delay(16);
+      }
+      lines.push(true); // Liga o desenho das linhas
+    }
+
+    // Cria as tags de texto que acompanham os objetos 3D.
+    // Inseridas NO rightPanel, para que o absolute tracking fique correto relativo ao canvas.
+    function createSpatialLabel(text, colorStr) {
+      const el = document.createElement('div');
+      el.className = 'spatial-label';
+      el.innerText = text;
+      el.style.color = colorStr;
+      el.style.textShadow = `0 0 15px ${colorStr}, 0 0 30px ${colorStr}`;
+      document.getElementById('right-panel').appendChild(el);
+      return el;
+    }
+
+    async function simulateAttentionQKV() {
+      if(activeNodes.length < 2) return;
+      
+      const qNode = activeNodes[0]; 
+      const kNode = activeNodes[activeNodes.length - 1];
+      
+      const qLabel = createSpatialLabel('QUERY', '#f472b6'); // Rosa
+      const kLabel = createSpatialLabel('KEY', '#34d399');   // Verde
+      const vLabel = createSpatialLabel('VALUE', '#c084fc'); // Roxo
+
+      activeLabels.push({ el: qLabel, node: qNode });
+      activeLabels.push({ el: kLabel, node: kNode });
+
+      // 1. Destaque da QUERY
+      qNode.material.color.setHex(0xf472b6); 
+      qNode.scale.set(1.5, 1.5, 1.5);
+      qLabel.classList.add('visible');
+      
+      await delay(2000);
+      
+      // 2. Busca da KEY
+      const mat = new THREE.LineBasicMaterial({ color: 0xffffff, linewidth: 3 });
+      const geo = new THREE.BufferGeometry().setFromPoints([
+         qNode.position.clone().applyMatrix4(nodesGroup.matrixWorld), 
+         kNode.position.clone().applyMatrix4(nodesGroup.matrixWorld)
+      ]);
+      const qkLine = new THREE.Line(geo, mat);
+      // Para a linha animar corretamente sem se perder na rotação global do grupo, 
+      // adicionamos direto na scene, pois suas coordenadas serão atualizadas manualmente no loop
+      scene.add(qkLine);
+
+      kNode.material.color.setHex(0x34d399); 
+      kNode.scale.set(1.5, 1.5, 1.5);
+      kLabel.classList.add('visible'); 
+      
+      await delay(2000); 
+
+      // Anima Q voando até K
+      const steps = 60;
+      const startPos = qNode.position.clone();
+      const endPos = kNode.position.clone();
+      
+      for(let i = 0; i <= steps; i++){
+         qNode.position.lerpVectors(startPos, endPos, i/steps);
+         
+         // Atualiza a linha de conexão com as posições mundiais transformadas
+         const wQ = qNode.position.clone().applyMatrix4(nodesGroup.matrixWorld);
+         const wK = kNode.position.clone().applyMatrix4(nodesGroup.matrixWorld);
+         geo.setFromPoints([wQ, wK]); 
+         
+         await delay(25);
+      }
+      
+      // 3. Encontro!
+      qLabel.classList.remove('visible');
+      kLabel.classList.remove('visible');
+      qNode.visible = false;
+      scene.remove(qkLine);
+      
+      kNode.material.color.setHex(0xc084fc); 
+      kNode.scale.set(2.5, 2.5, 2.5);
+      
+      activeLabels.push({ el: vLabel, node: kNode });
+      vLabel.classList.add('visible'); 
+      
+      await delay(3000); 
+
+      vLabel.classList.remove('visible');
+      await delay(800);
+
+      activeLabels.forEach(l => l.el.remove());
+      activeLabels = [];
+    }
+
+    function updateStatus(text, icon="⏳") {
+      document.getElementById('status-text').innerHTML = `<span class="mr-1">${icon}</span> ${text}`;
+    }
+
+    function setExplanation(title, text, icon="ℹ️") {
+      document.getElementById('explanation-title').innerText = title;
+      document.getElementById('explanation-text').innerHTML = text;
+      document.getElementById('footer-icon').innerText = icon;
+    }
+
+    function updateStep(stepNum) {
+      document.querySelectorAll('.step-indicator').forEach((el, idx) => {
+        if (idx < stepNum - 1) {
+          el.className = "step-indicator done";
+        } else if (idx === stepNum - 1) {
+          el.className = "step-indicator active glow-blue";
+        } else {
+          el.className = "step-indicator";
+        }
+      });
+    }
+
+    async function animateElementFlight(sourceEl, targetRect, duration = 1000) {
+      return new Promise((resolve) => {
+        const overlay = document.getElementById('animation-overlay');
+        const sourceRect = sourceEl.getBoundingClientRect();
+        
+        const clone = sourceEl.cloneNode(true);
+        clone.id = clone.id + "-clone"; 
+        
+        clone.style.position = 'absolute';
+        clone.style.top = `${sourceRect.top}px`;
+        clone.style.left = `${sourceRect.left}px`;
+        clone.style.width = `${sourceRect.width}px`;
+        clone.style.height = `${sourceRect.height}px`;
+        clone.style.margin = '0';
+        clone.style.transition = `all ${duration}ms cubic-bezier(0.25, 1, 0.5, 1)`;
+        clone.style.zIndex = '10000';
+        
+        overlay.appendChild(clone);
+        
+        sourceEl.style.opacity = '0';
+        void clone.offsetWidth;
+
+        clone.style.top = `${targetRect.top}px`;
+        clone.style.left = `${targetRect.left}px`;
+        clone.style.width = `${targetRect.width}px`;
+        clone.style.height = `${targetRect.height}px`;
+        clone.classList.add('glow-blue');
+
+        setTimeout(() => {
+          clone.remove();
+          resolve();
+        }, duration);
+      });
+    }
+
+    function generateRandomVector() {
+      const vec = [];
+      for(let i=0; i<8; i++) {
+        vec.push((Math.random() * 2 - 1).toFixed(4));
+      }
+      return vec;
+    }
+
+    // --- TIMELINE DE EXECUÇÃO ---
+    async function startDidacticSequence() {
+      if (isPlaying) return;
+      isPlaying = true;
+      document.getElementById('btn-play').classList.add('hidden');
+      
+      const userMsgContainer = document.getElementById('user-msg-container');
+      const chatBubble = document.getElementById('user-msg');
+      const tokenizerDropzone = document.getElementById('tokenizer-dropzone');
+      const tokenizerHint = document.getElementById('tokenizer-hint');
+      const tokensWrapper = document.getElementById('tokens-wrapper');
+      const matrixContainer = document.getElementById('matrix-container');
+      const canvasContainer = document.getElementById('canvas-container');
+      const botMsgContainer = document.getElementById('bot-msg-container');
+      
+      tokensWrapper.innerHTML = '';
+      matrixContainer.innerHTML = '';
+      botMsgContainer.style.opacity = '0';
+      canvasContainer.classList.remove('active');
+      nodesGroup.clear(); linesGroup.clear();
+
+      // Fase 0
+      setExplanation("Fase 0: A Entrada", "Tudo começa no mundo natural. Você digita uma pergunta. Para o computador, isso é apenas uma string de texto sem significado inerente.", "📱");
+      updateStatus("Recebendo texto do usuário...");
+      userMsgContainer.style.opacity = '1';
+      userMsgContainer.classList.add('fade-enter-active');
+      
+      await showFloatingTitle("PROMPT", 2500);
+
+      // Fase 1
+      updateStep(1);
+      setExplanation("Fase 1: Tokenização (BPE - Byte Pair Encoding)", "O LLM corta o texto em fragmentos frequentes (Tokens).", "✂️");
+      updateStatus("Enviando para o Tokenizador...");
+      tokenizerDropzone.classList.add('glow-purple');
+      
+      const targetRect = tokenizerDropzone.getBoundingClientRect();
+      const destRect = {
+        top: targetRect.top + (targetRect.height/2) - (chatBubble.offsetHeight/2),
+        left: targetRect.left + (targetRect.width/2) - (chatBubble.offsetWidth/2),
+        width: chatBubble.offsetWidth,
+        height: chatBubble.offsetHeight
+      };
+      
+      await animateElementFlight(chatBubble, destRect, 1000);
+      tokenizerHint.style.opacity = '0';
+      tokensWrapper.style.opacity = '1';
+
+      await showFloatingTitle("TOKENIZAÇÃO", 2500); 
+
+      tokens.forEach(tk => {
+        const div = document.createElement('div');
+        div.className = 'token-card fade-enter fade-enter-active';
+        div.innerHTML = `
+          <span class="token-text-layer text-neon-blue">"${tk.text}"</span>
+          <span class="token-id-layer">${tk.id}</span>
+        `;
+        tokensWrapper.appendChild(div);
+      });
+
+      await delay(2500);
+
+      // Fase 2
+      setExplanation("Fase 1.5: O Dicionário de IDs", "Cada token é mapeado para um ID no vocabulário do LLM.", "🔢");
+      updateStatus("Mapeando vocabulário (IDs)...");
+      
+      const tokenCards = document.querySelectorAll('.token-card');
+      tokenCards.forEach((card, index) => {
+        setTimeout(() => { card.classList.add('flip', 'glow-blue'); }, index * 150);
+      });
+
+      await delay(2500);
+
+      // Fase 3
+      updateStep(2);
+      setExplanation("Fase 2: A Operação de Embedding", "Cada ID busca um Vetor Denso na matriz de embeddings. Esses números representam os traços semânticos.", "📊");
+      updateStatus("Buscando vetores na matriz contínua...");
+      tokenizerDropzone.classList.remove('glow-purple');
+
+      await showFloatingTitle("EMBEDDING", 2500);
+
+      tokenCards.forEach((card, index) => {
+        setTimeout(() => {
+          card.classList.remove('glow-blue');
+          card.style.borderColor = '#c084fc';
+          
+          const row = document.createElement('div');
+          row.className = 'embedding-row flex items-center justify-center w-full';
+          
+          const idLabel = document.createElement('div');
+          idLabel.className = 'text-neon-purple font-mono text-xs w-12 text-right mr-2 font-bold';
+          idLabel.innerText = `[${tokens[index].id}] ➔`;
+          row.appendChild(idLabel);
+
+          const vector = generateRandomVector();
+          vector.forEach((val) => {
+            const cell = document.createElement('div');
+            cell.className = 'embedding-cell font-mono flex-1'; // Usando flex-1 para preencher uniformemente
+            cell.innerText = val;
+            if (parseFloat(val) > 0.5 || parseFloat(val) < -0.5) cell.classList.add('highlight');
+            row.appendChild(cell);
+          });
+          
+          matrixContainer.appendChild(row);
+          void row.offsetWidth;
+          row.classList.add('active');
+
+        }, index * 400); 
+      });
+
+      await delay(tokens.length * 400 + 1500);
+
+      // Fase 4
+      updateStep(3);
+      setExplanation("Fase 3: O Mecanismo de Atenção (Espaço Latente)", "As coordenadas posicionam cada token no hiperespaço 3D. A rede avalia como cada token se relaciona (Atenção).", "🌌");
+      updateStatus("Projetando no Espaço Latente de Atenção...", "👁️");
+      
+      matrixContainer.style.opacity = '0.1';
+      tokensWrapper.style.opacity = '0.1';
+      tokenizerDropzone.style.borderColor = 'rgba(51, 65, 85, 0.2)';
+      
+      canvasContainer.classList.add('active');
+      createTokenNodes3D(tokens.length);
+      await animateNodesIn();
+      
+      const cossenoHTML = `
+        <div class="flex flex-col items-center justify-center font-serif text-3xl md:text-5xl text-neon-blue bg-slate-900/90 p-8 rounded-3xl border-2 border-neon-blue/50 backdrop-blur-xl shadow-[0_0_40px_rgba(56,189,248,0.7)] pointer-events-auto">
+          <div class="text-xs md:text-sm font-sans tracking-widest uppercase mb-4 md:mb-6 text-slate-300 font-bold">Similaridade de Cosseno</div>
+          <div class="flex items-center gap-4 md:gap-6">
+            <span class="text-white">cos(θ) =</span>
+            <div class="flex flex-col items-center justify-center">
+              <span class="border-b-[3px] border-neon-blue pb-2 px-6">u · v</span>
+              <span class="pt-2 px-6">||u|| ||v||</span>
+            </div>
+          </div>
+        </div>
+      `;
+      await showFloatingTitle(cossenoHTML, 4000);
+      
+      await simulateAttentionQKV();
+
+      // Fase 5
+      updateStep(4);
+      setExplanation("Fase 4: Geração Auto-Regressiva & Decodificação", "O LLM projeta um novo vetor que aponta para a palavra provável, convertendo Logits em IDs, e depois texto.", "🗣️");
+      updateStatus("Calculando Logits e decodificando resposta...");
+
+      canvasContainer.classList.remove('active');
+      await delay(1000);
+
+      tokensWrapper.innerHTML = '';
+      matrixContainer.innerHTML = '';
+      tokenizerDropzone.style.borderColor = 'rgba(52, 211, 153, 0.8)';
+      tokenizerDropzone.classList.add('glow-green');
+      
+      tokensWrapper.style.opacity = '1';
+      matrixContainer.style.opacity = '1';
+
+      responseTokens.forEach((tk, index) => {
+        setTimeout(() => {
+          const div = document.createElement('div');
+          div.className = 'token-card flip'; 
+          div.style.borderColor = '#34d399';
+          div.innerHTML = `
+            <span class="token-text-layer text-neon-green">"${tk.text}"</span>
+            <span class="token-id-layer text-neon-green" style="color: #34d399;">${tk.id}</span>
+          `;
+          tokensWrapper.appendChild(div);
+          
+          setTimeout(() => {
+            div.classList.remove('flip');
+            div.classList.add('glow-green');
+          }, 300);
+
+        }, index * 400);
+      });
+
+      await delay(responseTokens.length * 400 + 1000);
+
+      // Fase 6
+      setExplanation("Missão Cumprida", "Os novos tokens são juntados e enviados de volta para a tela do usuário através da rede.", "✅");
+      updateStatus("Enviando resposta ao cliente...", "🚀");
+
+      const finalString = responseTokens.map(t => t.text).join('').trim();
+      document.getElementById('bot-msg').innerText = finalString;
+      
+      const sourceRect = tokensWrapper.getBoundingClientRect();
+      const botMsgDiv = document.getElementById('bot-msg');
+      botMsgContainer.style.opacity = '1'; 
+      botMsgDiv.style.opacity = '0'; 
+      
+      const ghost = document.createElement('div');
+      ghost.className = 'chat-bubble bot text-sm text-neon-green flex items-center justify-center glow-green shadow-xl';
+      ghost.innerText = finalString;
+      ghost.style.position = 'absolute';
+      ghost.style.top = `${sourceRect.top}px`;
+      ghost.style.left = `${sourceRect.left}px`;
+      ghost.style.width = `${sourceRect.width}px`;
+      ghost.style.height = `40px`; 
+      ghost.style.zIndex = '10000';
+      ghost.style.transition = 'all 1s cubic-bezier(0.25, 1, 0.5, 1)';
+      document.getElementById('animation-overlay').appendChild(ghost);
+
+      tokensWrapper.style.opacity = '0';
+      void ghost.offsetWidth;
+
+      const destTarget = botMsgDiv.getBoundingClientRect();
+      ghost.style.top = `${destTarget.top}px`;
+      ghost.style.left = `${destTarget.left}px`;
+      ghost.style.width = `${destTarget.width}px`;
+      ghost.style.height = `${destTarget.height}px`;
+
+      await delay(1000);
+      ghost.remove();
+      botMsgDiv.style.opacity = '1'; 
+      tokenizerDropzone.classList.remove('glow-green');
+
+      updateStatus("Processo Finalizado.", "🏁");
+      document.getElementById('btn-reset').classList.remove('hidden');
+    }
+
+    function resetSimulation() {
+      window.location.reload();
+    }
+
+    window.addEventListener('load', () => {
+      init3DSpace();
+    });
+  </script>
+</body>
+</html>
